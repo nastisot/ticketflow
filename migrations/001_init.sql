@@ -1,0 +1,27 @@
+CREATE TABLE events (
+    id BIGSERIAL PRIMARY KEY,
+    name VARCHAR(50) NOT NULL,
+    address VARCHAR(100) NOT NULL,
+    date TIMESTAMP NOT NULL
+);
+
+CREATE TABLE seats (
+    id BIGSERIAL PRIMARY KEY,
+    event_id BIGINT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+    number VARCHAR(10) NOT NULL,
+    price_cents BIGINT NOT NULL CHECK (price_cents >= 0),
+
+    UNIQUE (event_id, number)
+);
+
+CREATE TABLE users (
+    id BIGSERIAL PRIMARY KEY,
+    name VARCHAR(50) NOT NULL
+);
+
+CREATE TABLE bookings (
+    id BIGSERIAL PRIMARY KEY,
+    seat_id BIGINT NOT NULL REFERENCES seats(id) ON DELETE CASCADE UNIQUE,
+    user_id BIGINT NOT NULL REFERENCES users(id),
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
