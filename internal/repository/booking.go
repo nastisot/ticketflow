@@ -19,8 +19,43 @@ func NewBookingRepository(db *pgxpool.Pool) *BookingRepository {
 }
 
 func (r *BookingRepository) Create(ctx context.Context, booking domain.Booking) (*domain.Booking, error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
+
+	var seatID int64
+
+	err = tx.QueryRow(ctx, `
+		SELECT id
+        FROM seats
+        WHERE id = $1
+        FOR UPDATE`,
+		booking.SeatID).Scan(&seatID)
+
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, domain.ErrSeatNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = tx.Exec(ctx, `
+		UPDATE bookings 
+        SET status = 'expired', updated_at = CURRENT_TIMESTAMP
+        WHERE seat_id = $1 AND status = 'pending' AND expires_at <= CURRENT_TIMESTAMP`,
+		booking.SeatID)
+
+	if err != nil {
+		return nil, err
+	}
+
 	var bookingNew domain.Booking
-	err := r.db.QueryRow(ctx, `
+
+	err = tx.QueryRow(ctx, `
 		INSERT INTO bookings (seat_id, user_id, status, expires_at)
     	VALUES ($1, $2, $3, $4)
         RETURNING id, seat_id, user_id, status, expires_at, created_at, updated_at;`,
@@ -47,14 +82,15 @@ func (r *BookingRepository) Create(ctx context.Context, booking domain.Booking) 
 					return nil, domain.ErrSeatAlreadyBooked
 				}
 			case "23503":
-				if pgErr.ConstraintName == "bookings_seat_id_fkey" {
-					return nil, domain.ErrSeatNotFound
-				}
 				if pgErr.ConstraintName == "bookings_user_id_fkey" {
 					return nil, domain.ErrUserNotFound
 				}
 			}
 		}
+		return nil, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
 	return &bookingNew, nil
