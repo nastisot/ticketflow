@@ -7,12 +7,14 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"ticketflow/internal/config"
 	"ticketflow/internal/handler"
 	"ticketflow/internal/middleware"
 	"ticketflow/internal/repository"
 	"ticketflow/internal/service"
+	"ticketflow/internal/worker"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -31,6 +33,10 @@ func main() {
 		)
 		os.Exit(1)
 	}
+	logger.Info(
+		"config loaded",
+		"booking_ttl", cfg.BookingTTL,
+	)
 
 	db, err := pgxpool.New(ctx, cfg.DatabaseURL)
 	if err != nil {
@@ -59,7 +65,7 @@ func main() {
 	seatHandler := handler.NewSeatHandler(seatService, logger)
 
 	bookingRepo := repository.NewBookingRepository(db)
-	bookingService := service.NewBookingService(bookingRepo)
+	bookingService := service.NewBookingService(bookingRepo, cfg.BookingTTL)
 	bookingHandler := handler.NewBookingHandler(bookingService, logger)
 
 	mux := http.NewServeMux()
@@ -70,7 +76,8 @@ func main() {
 	mux.HandleFunc("GET /events/{id}/seats", seatHandler.GetByEventID)
 	mux.HandleFunc("POST /seats/{id}/bookings", bookingHandler.Create)
 	mux.HandleFunc("GET /bookings/{id}", bookingHandler.GetByID)
-	mux.HandleFunc("DELETE /bookings/{id}", bookingHandler.Delete)
+	mux.HandleFunc("DELETE /bookings/{id}", bookingHandler.Cancel)
+	mux.HandleFunc("POST /bookings/{id}/confirm", bookingHandler.Confirm)
 
 	httpHandler := middleware.RequestID(middleware.Logging(logger, mux))
 
@@ -88,6 +95,19 @@ func main() {
 		ErrorLog: serverErrorLogger,
 	}
 
+	appCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	expirationWorker := worker.NewBookingExpirationWorker(bookingService, logger, 60*time.Second, 100)
+
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		expirationWorker.Run(appCtx)
+	}()
+
 	logger.Info(
 		"starting server",
 		"port", cfg.Port,
@@ -103,9 +123,7 @@ func main() {
 		}
 	}()
 
-	shutdownSignalCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	<-shutdownSignalCtx.Done()
+	<-appCtx.Done()
 
 	logger.Info("shutting down server")
 
@@ -119,5 +137,8 @@ func main() {
 		)
 		return
 	}
+
+	wg.Wait()
+
 	logger.Info("server stopped")
 }

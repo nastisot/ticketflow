@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"ticketflow/internal/domain"
 	"ticketflow/internal/models"
 	"time"
 )
@@ -18,7 +19,10 @@ type SeatRepository interface {
 }
 
 type BookingRepository interface {
-	Create(ctx context.Context, seatID int64, userID int64) (*models.Booking, error)
-	GetByID(ctx context.Context, id int64) (*models.Booking, error)
-	Delete(ctx context.Context, id int64) (bool, error)
+	Create(ctx context.Context, booking domain.Booking) (*domain.Booking, error)
+	GetByID(ctx context.Context, id int64) (*domain.Booking, error)
+	Confirm(ctx context.Context, id int64) (*domain.Booking, error)
+	Expire(ctx context.Context, id int64, from domain.BookingStatus) (*domain.Booking, error)
+	Cancel(ctx context.Context, id int64, from domain.BookingStatus) (*domain.Booking, error)
+	GetExpiredPendingIDs(ctx context.Context, limit int) ([]int64, error)
 }
