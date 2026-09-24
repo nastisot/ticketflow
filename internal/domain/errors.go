@@ -10,4 +10,5 @@ var (
 	ErrSeatNotFound             = errors.New("seat not found")
 	ErrUserNotFound             = errors.New("user not found")
 	ErrBookingStateConflict     = errors.New("booking state changed")
+	ErrBookingNotExpired        = errors.New("booking has not expired yet")
 )

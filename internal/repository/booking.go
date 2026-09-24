@@ -110,6 +110,33 @@ func (r *BookingRepository) Confirm(ctx context.Context, id int64) (*domain.Book
 	return &booking, nil
 }
 
+func (r *BookingRepository) Expire(ctx context.Context, id int64, from domain.BookingStatus) (*domain.Booking, error) {
+	var booking domain.Booking
+	err := r.db.QueryRow(ctx, `
+		UPDATE bookings
+        SET status = 'expired', updated_at = CURRENT_TIMESTAMP 
+        WHERE id = $1 AND status = $2 AND expires_at <= CURRENT_TIMESTAMP
+        RETURNING id, seat_id, user_id, status, expires_at, created_at, updated_at;`,
+		id,
+		from,
+	).Scan(
+		&booking.ID,
+		&booking.SeatID,
+		&booking.UserID,
+		&booking.Status,
+		&booking.ExpiresAt,
+		&booking.CreatedAt,
+		&booking.UpdatedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &booking, nil
+}
+
 func (r *BookingRepository) Cancel(ctx context.Context, id int64, from domain.BookingStatus) (*domain.Booking, error) {
 	var booking domain.Booking
 	err := r.db.QueryRow(ctx, `
@@ -135,4 +162,30 @@ func (r *BookingRepository) Cancel(ctx context.Context, id int64, from domain.Bo
 		return nil, err
 	}
 	return &booking, nil
+}
+
+func (r *BookingRepository) GetExpiredPendingIDs(ctx context.Context, limit int) ([]int64, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT id
+		FROM bookings
+		WHERE status = 'pending' AND expires_at <= CURRENT_TIMESTAMP
+		ORDER BY expires_at
+		LIMIT $1;`, limit)
+
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	ids := make([]int64, 0)
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return ids, nil
 }

@@ -7,12 +7,14 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"ticketflow/internal/config"
 	"ticketflow/internal/handler"
 	"ticketflow/internal/middleware"
 	"ticketflow/internal/repository"
 	"ticketflow/internal/service"
+	"ticketflow/internal/worker"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -31,6 +33,10 @@ func main() {
 		)
 		os.Exit(1)
 	}
+	logger.Info(
+		"config loaded",
+		"booking_ttl", cfg.BookingTTL,
+	)
 
 	db, err := pgxpool.New(ctx, cfg.DatabaseURL)
 	if err != nil {
@@ -89,6 +95,19 @@ func main() {
 		ErrorLog: serverErrorLogger,
 	}
 
+	appCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	expirationWorker := worker.NewBookingExpirationWorker(bookingService, logger, 30*time.Second, 100)
+
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		expirationWorker.Run(appCtx)
+	}()
+
 	logger.Info(
 		"starting server",
 		"port", cfg.Port,
@@ -104,9 +123,7 @@ func main() {
 		}
 	}()
 
-	shutdownSignalCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	<-shutdownSignalCtx.Done()
+	<-appCtx.Done()
 
 	logger.Info("shutting down server")
 
@@ -120,5 +137,8 @@ func main() {
 		)
 		return
 	}
+
+	wg.Wait()
+
 	logger.Info("server stopped")
 }

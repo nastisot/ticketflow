@@ -75,6 +75,34 @@ func (s *BookingService) Confirm(ctx context.Context, id int64) (*domain.Booking
 
 }
 
+func (s *BookingService) Expire(ctx context.Context, id int64) (*domain.Booking, error) {
+	booking, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if booking == nil {
+		return nil, domain.ErrBookingNotFound
+	}
+	if err := domain.ValidateBookingTransition(booking.Status, domain.BookingStatusExpired); err != nil {
+		return nil, err
+	}
+	if booking.ExpiresAt == nil {
+		return nil, errors.New("pending booking has no expiration time")
+	}
+	now := time.Now()
+	if now.Before(*booking.ExpiresAt) {
+		return nil, domain.ErrBookingNotExpired
+	}
+	expiredBooking, err := s.repo.Expire(ctx, id, booking.Status)
+	if err != nil {
+		return nil, err
+	}
+	if expiredBooking == nil {
+		return nil, domain.ErrBookingStateConflict
+	}
+	return expiredBooking, nil
+}
+
 func (s *BookingService) Cancel(ctx context.Context, id int64) (*domain.Booking, error) {
 	booking, err := s.repo.GetByID(ctx, id)
 	if err != nil {
@@ -94,4 +122,22 @@ func (s *BookingService) Cancel(ctx context.Context, id int64) (*domain.Booking,
 		return nil, domain.ErrBookingStateConflict
 	}
 	return cancelBooking, nil
+}
+
+func (s *BookingService) ExpirePending(ctx context.Context, limit int) error {
+	ids, err := s.repo.GetExpiredPendingIDs(ctx, limit)
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		_, err := s.Expire(ctx, id)
+		if err == nil {
+			continue
+		}
+		if errors.Is(err, domain.ErrBookingNotFound) || errors.Is(err, domain.ErrBookingStateConflict) || errors.Is(err, domain.ErrInvalidBookingTransition) || errors.Is(err, domain.ErrBookingNotExpired) {
+			continue
+		}
+		return err
+	}
+	return nil
 }
