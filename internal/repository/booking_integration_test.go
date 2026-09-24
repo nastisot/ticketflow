@@ -40,8 +40,56 @@ func openTestDB(t *testing.T) *pgxpool.Pool {
 
 }
 
-func TestBookingRepository_ConcurrentCreate(t *testing.T) {
-	db := openTestDB(t)
+func createTestEvent(t *testing.T, db *pgxpool.Pool) int64 {
+	t.Helper()
+
+	var id int64
+
+	err := db.QueryRow(context.Background(), `
+		INSERT INTO events (name, address, date)
+		VALUES ('Test Event', 'Test Address', NOW())
+		RETURNING id
+		`).Scan(&id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+func createTestSeat(t *testing.T, db *pgxpool.Pool, eventID int64, number string) int64 {
+	t.Helper()
+
+	var id int64
+
+	err := db.QueryRow(context.Background(), `
+ 		INSERT INTO seats (event_id, number, price_cents)
+ 		VALUES ($1, $2, 10000)
+ 		RETURNING id
+ 		`, eventID, number).Scan(&id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+func createTestUser(t *testing.T, db *pgxpool.Pool, name string) int64 {
+	t.Helper()
+
+	var id int64
+
+	err := db.QueryRow(context.Background(), `
+        INSERT INTO users (name)
+        VALUES ($1)
+        RETURNING id
+        `, name).Scan(&id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+func cleanTestDB(t *testing.T, db *pgxpool.Pool) {
+	t.Helper()
 
 	_, err := db.Exec(context.Background(), `
 		TRUNCATE bookings, seats, users, events
@@ -50,54 +98,25 @@ func TestBookingRepository_ConcurrentCreate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+}
 
-	var eventID int64
-	err = db.QueryRow(context.Background(), `
-		INSERT INTO events (name, address, date)
-		VALUES ('Test Event', 'Test Address', NOW())
-		RETURNING id
-		`).Scan(&eventID)
-	if err != nil {
-		t.Fatal(err)
-	}
+func TestBookingRepository_ConcurrentCreate(t *testing.T) {
+	db := openTestDB(t)
 
-	var seatID int64
-	err = db.QueryRow(context.Background(), `
- 		INSERT INTO seats (event_id, number, price_cents)
- 		VALUES ($1, 'A1', 10000)
- 		RETURNING id
- 		`, eventID).Scan(&seatID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	cleanTestDB(t, db)
 
-	var user1ID int64
-	var user2ID int64
+	eventID := createTestEvent(t, db)
+	seatID := createTestSeat(t, db, eventID, "A1")
 
-	err = db.QueryRow(context.Background(), `
-        INSERT INTO users (name)
-        VALUES ('User 1')
-        RETURNING id
-        `).Scan(&user1ID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	user1ID := createTestUser(t, db, "User 1")
+	user2ID := createTestUser(t, db, "User 2")
 
-	err = db.QueryRow(context.Background(), `
-        INSERT INTO users (name)
-        VALUES ('User 2')
-        RETURNING id
-        `).Scan(&user2ID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	repo := repository.NewBookingRepository(db)
 
 	var wg sync.WaitGroup
 
 	results := make(chan error, 2)
 	start := make(chan struct{})
-
-	repo := repository.NewBookingRepository(db)
 
 	wg.Add(2)
 
@@ -156,7 +175,7 @@ func TestBookingRepository_ConcurrentCreate(t *testing.T) {
 	}
 
 	var count int64
-	err = db.QueryRow(context.Background(), `SELECT COUNT(*) FROM bookings WHERE seat_id = $1 AND status IN ('pending', 'confirmed')`, seatID).Scan(&count)
+	err := db.QueryRow(context.Background(), `SELECT COUNT(*) FROM bookings WHERE seat_id = $1 AND status IN ('pending', 'confirmed')`, seatID).Scan(&count)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,48 +187,16 @@ func TestBookingRepository_ConcurrentCreate(t *testing.T) {
 func TestBookingStalePending(t *testing.T) {
 	db := openTestDB(t)
 
-	_, err := db.Exec(context.Background(), `
-		TRUNCATE bookings, seats, users, events
-		RESTART IDENTITY CASCADE
-	`)
-	if err != nil {
-		t.Fatal(err)
-	}
+	cleanTestDB(t, db)
 
-	var eventID int64
-	err = db.QueryRow(context.Background(), `
-		INSERT INTO events (name, address, date)
-		VALUES ('Test Event', 'Test Address', NOW())
-		RETURNING id
-		`).Scan(&eventID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	eventID := createTestEvent(t, db)
+	seatID := createTestSeat(t, db, eventID, "A1")
 
-	var seatID int64
-	err = db.QueryRow(context.Background(), `
- 		INSERT INTO seats (event_id, number, price_cents)
- 		VALUES ($1, 'A1', 10000)
- 		RETURNING id
- 		`, eventID).Scan(&seatID)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	var user1ID int64
-
-	err = db.QueryRow(context.Background(), `
-        INSERT INTO users (name)
-        VALUES ('User 1')
-        RETURNING id
-        `).Scan(&user1ID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	user1ID := createTestUser(t, db, "User 1")
 
 	repo := repository.NewBookingRepository(db)
 
-	_, err = db.Exec(context.Background(), `
+	_, err := db.Exec(context.Background(), `
 		INSERT INTO bookings (seat_id, user_id, status, expires_at)
 		VALUES ($1, $2, 'pending', CURRENT_TIMESTAMP - INTERVAL '1 minute')`, seatID, user1ID)
 	if err != nil {
