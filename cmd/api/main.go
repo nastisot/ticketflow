@@ -59,7 +59,7 @@ func main() {
 	seatHandler := handler.NewSeatHandler(seatService, logger)
 
 	bookingRepo := repository.NewBookingRepository(db)
-	bookingService := service.NewBookingService(bookingRepo)
+	bookingService := service.NewBookingService(bookingRepo, cfg.BookingTTL)
 	bookingHandler := handler.NewBookingHandler(bookingService, logger)
 
 	mux := http.NewServeMux()
@@ -70,7 +70,8 @@ func main() {
 	mux.HandleFunc("GET /events/{id}/seats", seatHandler.GetByEventID)
 	mux.HandleFunc("POST /seats/{id}/bookings", bookingHandler.Create)
 	mux.HandleFunc("GET /bookings/{id}", bookingHandler.GetByID)
-	mux.HandleFunc("DELETE /bookings/{id}", bookingHandler.Delete)
+	mux.HandleFunc("DELETE /bookings/{id}", bookingHandler.Cancel)
+	mux.HandleFunc("POST /bookings/{id}/confirm", bookingHandler.Confirm)
 
 	httpHandler := middleware.RequestID(middleware.Logging(logger, mux))
 

@@ -28,10 +28,3 @@ type User struct {
 	ID   int64
 	Name string
 }
-
-type Booking struct {
-	ID        int64
-	SeatID    int64
-	UserID    int64
-	CreatedAt time.Time
-}
