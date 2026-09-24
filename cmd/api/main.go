@@ -98,7 +98,7 @@ func main() {
 	appCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	expirationWorker := worker.NewBookingExpirationWorker(bookingService, logger, 30*time.Second, 100)
+	expirationWorker := worker.NewBookingExpirationWorker(bookingService, logger, 60*time.Second, 100)
 
 	var wg sync.WaitGroup
 

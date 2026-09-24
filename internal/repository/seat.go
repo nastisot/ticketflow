@@ -43,7 +43,7 @@ func (r *SeatRepository) Create(ctx context.Context, eventID int64, number strin
 func (r *SeatRepository) GetByEventID(ctx context.Context, eventID int64) ([]models.SeatWithAvailability, error) {
 	rows, err := r.db.Query(ctx,
 		`SELECT s.id, s.event_id, s.number, s.price_cents, b.id IS NULL AS available
-	         FROM seats s LEFT JOIN bookings b ON b.seat_id = s.id AND b.status IN ('pending', 'confirmed')
+	         FROM seats s LEFT JOIN bookings b ON b.seat_id = s.id AND (b.status = 'confirmed' OR (b.status = 'pending' AND b.expires_at > CURRENT_TIMESTAMP))
 	         WHERE s.event_id = $1
 	         ORDER BY s.id;`, eventID)
 	if err != nil {
