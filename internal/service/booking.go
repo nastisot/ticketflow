@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"ticketflow/internal/domain"
 	"time"
@@ -64,7 +65,17 @@ func (s *BookingService) Confirm(ctx context.Context, id int64) (*domain.Booking
 		return nil, domain.ErrBookingExpired
 	}
 
-	updatedBooking, err := s.repo.Confirm(ctx, id)
+	eventPayload := domain.BookingConfirmedPayload{
+		BookingID: booking.ID,
+		SeatID:    booking.SeatID,
+		UserID:    booking.UserID,
+	}
+	payload, err := json.Marshal(eventPayload)
+	if err != nil {
+		return nil, err
+	}
+
+	updatedBooking, err := s.repo.Confirm(ctx, id, domain.BookingConfirmedEventType, payload)
 	if err != nil {
 		return nil, err
 	}
@@ -72,7 +83,6 @@ func (s *BookingService) Confirm(ctx context.Context, id int64) (*domain.Booking
 		return nil, domain.ErrBookingStateConflict
 	}
 	return updatedBooking, nil
-
 }
 
 func (s *BookingService) Expire(ctx context.Context, id int64) (*domain.Booking, error) {

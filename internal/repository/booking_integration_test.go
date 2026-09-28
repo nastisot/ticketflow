@@ -4,6 +4,7 @@ package repository_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"sync"
@@ -242,5 +243,104 @@ func TestBookingStalePending(t *testing.T) {
 
 	if len(statuses) != 2 || statuses[0] != domain.BookingStatusExpired || statuses[1] != domain.BookingStatusPending {
 		t.Fatalf("expected [expired pending], got %v", statuses)
+	}
+}
+
+func TestBookingRepository_ConfirmCreatesOutboxEvent(t *testing.T) {
+	db := openTestDB(t)
+
+	cleanTestDB(t, db)
+	eventID := createTestEvent(t, db)
+	seatID := createTestSeat(t, db, eventID, "A1")
+	userID := createTestUser(t, db, "User 1")
+
+	repo := repository.NewBookingRepository(db)
+
+	expiresAt := time.Now().Add(10 * time.Minute)
+
+	booking := domain.Booking{
+		SeatID:    seatID,
+		UserID:    userID,
+		Status:    domain.BookingStatusPending,
+		ExpiresAt: &expiresAt,
+	}
+
+	bookingCreated, err := repo.Create(context.Background(), booking)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	payload, err := json.Marshal(domain.BookingConfirmedPayload{BookingID: bookingCreated.ID, SeatID: seatID, UserID: userID})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	bookingConfirmed, err := repo.Confirm(context.Background(), bookingCreated.ID, domain.BookingConfirmedEventType, payload)
+	if err != nil {
+		t.Fatalf("Confirm: %v", err)
+	}
+	if bookingConfirmed == nil {
+		t.Fatal("expected confirmed booking, got nil")
+	}
+	if bookingConfirmed.Status != domain.BookingStatusConfirmed {
+		t.Fatalf("expected confirmed, got %s", bookingConfirmed.Status)
+	}
+
+	var count int64
+	err = db.QueryRow(context.Background(), `SELECT COUNT(*) FROM outbox_events WHERE aggregate_id = $1;`, bookingConfirmed.ID).Scan(&count)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("got row %d, want 1", count)
+	}
+}
+
+func TestBookingRepository_ConfirmRollsBackWhenOutboxInsertFails(t *testing.T) {
+	db := openTestDB(t)
+
+	cleanTestDB(t, db)
+
+	eventID := createTestEvent(t, db)
+	seatID := createTestSeat(t, db, eventID, "A1")
+	userID := createTestUser(t, db, "User 1")
+
+	repo := repository.NewBookingRepository(db)
+
+	expiresAt := time.Now().Add(10 * time.Minute)
+
+	created, err := repo.Create(context.Background(), domain.Booking{
+		SeatID:    seatID,
+		UserID:    userID,
+		Status:    domain.BookingStatusPending,
+		ExpiresAt: &expiresAt,
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	invalidPayload := []byte(`{invalid json`)
+
+	_, err = repo.Confirm(context.Background(), created.ID, domain.BookingConfirmedEventType, invalidPayload)
+	if err == nil {
+		t.Fatal("expected confirm to fail")
+	}
+
+	var status domain.BookingStatus
+	err = db.QueryRow(context.Background(), `SELECT status FROM bookings WHERE id = $1`, created.ID).Scan(&status)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status != domain.BookingStatusPending {
+		t.Fatalf("expected pending after rollback, got %s", status)
+	}
+
+	var count int64
+	err = db.QueryRow(context.Background(), `SELECT COUNT(*) FROM outbox_events WHERE aggregate_id = $1;`, created.ID).Scan(&count)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("expected 0 outbox events, got %d", count)
 	}
 }

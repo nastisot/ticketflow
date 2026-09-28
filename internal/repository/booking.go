@@ -121,9 +121,17 @@ func (r *BookingRepository) GetByID(ctx context.Context, id int64) (*domain.Book
 	return &booking, nil
 }
 
-func (r *BookingRepository) Confirm(ctx context.Context, id int64) (*domain.Booking, error) {
+func (r *BookingRepository) Confirm(ctx context.Context, id int64, eventType string, payload []byte) (*domain.Booking, error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
+
 	var booking domain.Booking
-	err := r.db.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		UPDATE bookings
         SET status = 'confirmed', updated_at = CURRENT_TIMESTAMP WHERE id = $1 AND status = 'pending' AND expires_at > CURRENT_TIMESTAMP
         RETURNING id, seat_id, user_id, status, expires_at, created_at, updated_at;`,
@@ -141,6 +149,17 @@ func (r *BookingRepository) Confirm(ctx context.Context, id int64) (*domain.Book
 		return nil, nil
 	}
 	if err != nil {
+		return nil, err
+	}
+
+	_, err = tx.Exec(ctx, `
+		INSERT INTO outbox_events (event_type, aggregate_id, payload)
+		VALUES ($1, $2, $3::jsonb)`, eventType, booking.ID, string(payload))
+	if err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
 	return &booking, nil
