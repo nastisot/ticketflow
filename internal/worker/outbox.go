@@ -1,0 +1,80 @@
+package worker
+
+import (
+	"context"
+	"log/slog"
+	"ticketflow/internal/domain"
+	"time"
+)
+
+type EventPublisher interface {
+	Publish(ctx context.Context, event domain.OutboxEvent) error
+}
+
+type OutboxRepository interface {
+	GetUnpublished(ctx context.Context, limit int) ([]domain.OutboxEvent, error)
+	MarkPublished(ctx context.Context, id int64) error
+}
+
+type OutboxWorker struct {
+	repo      OutboxRepository
+	publisher EventPublisher
+	logger    *slog.Logger
+	interval  time.Duration
+	limit     int
+}
+
+func NewOutboxWorker(repo OutboxRepository, publisher EventPublisher, logger *slog.Logger, interval time.Duration, limit int) *OutboxWorker {
+	return &OutboxWorker{
+		repo:      repo,
+		publisher: publisher,
+		logger:    logger,
+		interval:  interval,
+		limit:     limit,
+	}
+}
+
+func (w *OutboxWorker) processBatch(ctx context.Context) error {
+	events, err := w.repo.GetUnpublished(ctx, w.limit)
+	if err != nil {
+		return err
+	}
+	for _, event := range events {
+		err = w.publisher.Publish(ctx, event)
+		if err != nil {
+			return err
+		}
+		err = w.repo.MarkPublished(ctx, event.ID)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (w *OutboxWorker) Run(ctx context.Context) {
+	w.logger.Info(
+		"outbox worker started",
+		"interval", w.interval,
+		"limit", w.limit,
+	)
+	ticker := time.NewTicker(w.interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := w.processBatch(ctx); err != nil {
+				if ctx.Err() != nil {
+					return
+				}
+				w.logger.Error(
+					"failed to process outbox events",
+					"error", err,
+				)
+			}
+		}
+	}
+}
