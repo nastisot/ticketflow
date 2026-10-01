@@ -27,7 +27,7 @@ type fakeOutboxRepository struct {
 	markedIDs []int64
 }
 
-func (r *fakeOutboxRepository) GetUnpublished(ctx context.Context, limit int) ([]domain.OutboxEvent, error) {
+func (r *fakeOutboxRepository) ClaimUnpublished(ctx context.Context, limit int) ([]domain.OutboxEvent, error) {
 	return r.events, nil
 }
 

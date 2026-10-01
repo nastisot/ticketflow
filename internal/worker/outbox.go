@@ -12,7 +12,7 @@ type EventPublisher interface {
 }
 
 type OutboxRepository interface {
-	GetUnpublished(ctx context.Context, limit int) ([]domain.OutboxEvent, error)
+	ClaimUnpublished(ctx context.Context, limit int) ([]domain.OutboxEvent, error)
 	MarkPublished(ctx context.Context, id int64) error
 }
 
@@ -35,7 +35,7 @@ func NewOutboxWorker(repo OutboxRepository, publisher EventPublisher, logger *sl
 }
 
 func (w *OutboxWorker) processBatch(ctx context.Context) error {
-	events, err := w.repo.GetUnpublished(ctx, w.limit)
+	events, err := w.repo.ClaimUnpublished(ctx, w.limit)
 	if err != nil {
 		return err
 	}
