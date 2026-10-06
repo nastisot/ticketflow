@@ -12,6 +12,7 @@ import (
 	"ticketflow/internal/config"
 	"ticketflow/internal/handler"
 	"ticketflow/internal/middleware"
+	"ticketflow/internal/publisher"
 	"ticketflow/internal/repository"
 	"ticketflow/internal/service"
 	"ticketflow/internal/worker"
@@ -56,6 +57,16 @@ func main() {
 		os.Exit(1)
 	}
 
+	kafkaPublisher, err := publisher.NewKafkaPublisher(cfg.KafkaBrokers, cfg.KafkaTopic)
+	if err != nil {
+		logger.Error(
+			"failed to create kafka publisher",
+			"error", err,
+		)
+		os.Exit(1)
+	}
+	defer kafkaPublisher.Close()
+
 	eventRepo := repository.NewEventRepository(db)
 	eventService := service.NewEventService(eventRepo)
 	eventHandler := handler.NewEventHandler(eventService, logger)
@@ -67,6 +78,8 @@ func main() {
 	bookingRepo := repository.NewBookingRepository(db)
 	bookingService := service.NewBookingService(bookingRepo, cfg.BookingTTL)
 	bookingHandler := handler.NewBookingHandler(bookingService, logger)
+
+	outboxRepo := repository.NewOutboxRepository(db)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /events", eventHandler.GetAll)
@@ -99,6 +112,7 @@ func main() {
 	defer stop()
 
 	expirationWorker := worker.NewBookingExpirationWorker(bookingService, logger, 30*time.Second, 100)
+	outboxWorker := worker.NewOutboxWorker(outboxRepo, kafkaPublisher, logger, cfg.OutboxInterval, cfg.OutboxLimit)
 
 	var wg sync.WaitGroup
 
@@ -106,6 +120,12 @@ func main() {
 	go func() {
 		defer wg.Done()
 		expirationWorker.Run(appCtx)
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		outboxWorker.Run(appCtx)
 	}()
 
 	logger.Info(
