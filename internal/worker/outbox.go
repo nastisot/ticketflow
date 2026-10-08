@@ -17,20 +17,22 @@ type OutboxRepository interface {
 }
 
 type OutboxWorker struct {
-	repo      OutboxRepository
-	publisher EventPublisher
-	logger    *slog.Logger
-	interval  time.Duration
-	limit     int
+	repo           OutboxRepository
+	publisher      EventPublisher
+	logger         *slog.Logger
+	interval       time.Duration
+	publishTimeout time.Duration
+	limit          int
 }
 
-func NewOutboxWorker(repo OutboxRepository, publisher EventPublisher, logger *slog.Logger, interval time.Duration, limit int) *OutboxWorker {
+func NewOutboxWorker(repo OutboxRepository, publisher EventPublisher, logger *slog.Logger, interval time.Duration, publishTimeout time.Duration, limit int) *OutboxWorker {
 	return &OutboxWorker{
-		repo:      repo,
-		publisher: publisher,
-		logger:    logger,
-		interval:  interval,
-		limit:     limit,
+		repo:           repo,
+		publisher:      publisher,
+		logger:         logger,
+		interval:       interval,
+		publishTimeout: publishTimeout,
+		limit:          limit,
 	}
 }
 
@@ -40,7 +42,11 @@ func (w *OutboxWorker) processBatch(ctx context.Context) error {
 		return err
 	}
 	for _, event := range events {
-		err = w.publisher.Publish(ctx, event)
+		publishCtx, cancel := context.WithTimeout(ctx, w.publishTimeout)
+		err = w.publisher.Publish(publishCtx, event)
+
+		cancel()
+
 		if err != nil {
 			return err
 		}

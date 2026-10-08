@@ -53,7 +53,8 @@ func main() {
 	if err := db.Ping(ctx); err != nil {
 		logger.Error(
 			"database is unavailable",
-			"error", err)
+			"error", err,
+		)
 		os.Exit(1)
 	}
 
@@ -112,7 +113,7 @@ func main() {
 	defer stop()
 
 	expirationWorker := worker.NewBookingExpirationWorker(bookingService, logger, 30*time.Second, 100)
-	outboxWorker := worker.NewOutboxWorker(outboxRepo, kafkaPublisher, logger, cfg.OutboxInterval, cfg.OutboxLimit)
+	outboxWorker := worker.NewOutboxWorker(outboxRepo, kafkaPublisher, logger, cfg.OutboxInterval, cfg.OutboxPublishTimeout, cfg.OutboxLimit)
 
 	var wg sync.WaitGroup
 

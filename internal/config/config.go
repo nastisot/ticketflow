@@ -12,13 +12,14 @@ import (
 )
 
 type Config struct {
-	DatabaseURL    string
-	Port           string
-	BookingTTL     time.Duration
-	KafkaBrokers   []string
-	KafkaTopic     string
-	OutboxInterval time.Duration
-	OutboxLimit    int
+	DatabaseURL          string
+	Port                 string
+	BookingTTL           time.Duration
+	KafkaBrokers         []string
+	KafkaTopic           string
+	OutboxInterval       time.Duration
+	OutboxLimit          int
+	OutboxPublishTimeout time.Duration
 }
 
 func Load() (*Config, error) {
@@ -88,14 +89,25 @@ func Load() (*Config, error) {
 		return nil, errors.New("OUTBOX_LIMIT must be greater than 0")
 	}
 
+	outboxPublishTimeoutString := os.Getenv("OUTBOX_PUBLISH_TIMEOUT")
+	if outboxPublishTimeoutString == "" {
+		outboxPublishTimeoutString = "5s"
+	}
+
+	outboxPublishTimeout, err := time.ParseDuration(outboxPublishTimeoutString)
+	if err != nil {
+		return nil, fmt.Errorf("invalid OUTBOX_PUBLISH_TIMEOUT: %w", err)
+	}
+
 	cfg := &Config{
-		DatabaseURL:    dataURL,
-		Port:           port,
-		BookingTTL:     bookingTTL,
-		KafkaBrokers:   kafkaBrokers,
-		KafkaTopic:     kafkaTopic,
-		OutboxInterval: outboxInterval,
-		OutboxLimit:    outboxLimit,
+		DatabaseURL:          dataURL,
+		Port:                 port,
+		BookingTTL:           bookingTTL,
+		KafkaBrokers:         kafkaBrokers,
+		KafkaTopic:           kafkaTopic,
+		OutboxInterval:       outboxInterval,
+		OutboxLimit:          outboxLimit,
+		OutboxPublishTimeout: outboxPublishTimeout,
 	}
 
 	return cfg, nil
